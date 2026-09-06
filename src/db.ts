@@ -2,9 +2,16 @@ import fs from "node:fs";
 import path from "node:path";
 import {DatabaseSync} from "node:sqlite";
 import type {Job,Memory,PlanStep} from "./types.js";
+import type {TestIdentity} from "./identity.js";
 fs.mkdirSync("data",{recursive:true});
 const db=new DatabaseSync(path.join("data","agent-v5.sqlite"));
-db.exec(`PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS jobs(job_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT NOT NULL,account_number INTEGER,kind TEXT NOT NULL,message TEXT NOT NULL,meta TEXT,created_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS memories(job_id TEXT NOT NULL,account_number INTEGER NOT NULL,json TEXT NOT NULL,PRIMARY KEY(job_id,account_number)); CREATE TABLE IF NOT EXISTS plans(job_id TEXT NOT NULL,account_number INTEGER NOT NULL,json TEXT NOT NULL,PRIMARY KEY(job_id,account_number)); CREATE TABLE IF NOT EXISTS results(job_id TEXT NOT NULL,account_number INTEGER NOT NULL,json TEXT NOT NULL,PRIMARY KEY(job_id,account_number));`);
+db.exec(`PRAGMA journal_mode=WAL;
+CREATE TABLE IF NOT EXISTS jobs(job_id TEXT PRIMARY KEY,json TEXT NOT NULL,updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT NOT NULL,account_number INTEGER,kind TEXT NOT NULL,message TEXT NOT NULL,meta TEXT,created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS memories(job_id TEXT NOT NULL,account_number INTEGER NOT NULL,json TEXT NOT NULL,PRIMARY KEY(job_id,account_number));
+CREATE TABLE IF NOT EXISTS plans(job_id TEXT NOT NULL,account_number INTEGER NOT NULL,json TEXT NOT NULL,PRIMARY KEY(job_id,account_number));
+CREATE TABLE IF NOT EXISTS results(job_id TEXT NOT NULL,account_number INTEGER NOT NULL,json TEXT NOT NULL,PRIMARY KEY(job_id,account_number));
+CREATE TABLE IF NOT EXISTS identities(job_id TEXT NOT NULL,account_number INTEGER NOT NULL,json TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(job_id,account_number));`);
 const putJob=db.prepare(`INSERT INTO jobs(job_id,json,updated_at) VALUES(?,?,?) ON CONFLICT(job_id) DO UPDATE SET json=excluded.json,updated_at=excluded.updated_at`);
 export function saveJob(j:Job){j.updatedAt=new Date().toISOString();putJob.run(j.jobId,JSON.stringify(j),j.updatedAt)}
 export function getJob(id:string):Job|undefined{const r=db.prepare(`SELECT json FROM jobs WHERE job_id=?`).get(id) as any;return r?JSON.parse(r.json):undefined}
@@ -17,4 +24,7 @@ export function savePlan(jobId:string,a:number,p:PlanStep[]){db.prepare(`INSERT 
 export function getPlan(jobId:string,a:number):PlanStep[]{const r=db.prepare(`SELECT json FROM plans WHERE job_id=? AND account_number=?`).get(jobId,a) as any;return r?JSON.parse(r.json):[]}
 export function saveResult(jobId:string,a:number,r:any){db.prepare(`INSERT INTO results(job_id,account_number,json) VALUES(?,?,?) ON CONFLICT(job_id,account_number) DO UPDATE SET json=excluded.json`).run(jobId,a,JSON.stringify(r))}
 export function listResults(jobId:string){return (db.prepare(`SELECT json FROM results WHERE job_id=? ORDER BY account_number`).all(jobId) as any[]).map(x=>JSON.parse(x.json))}
+export function saveIdentity(jobId:string,a:number,identity:TestIdentity){db.prepare(`INSERT INTO identities(job_id,account_number,json,updated_at) VALUES(?,?,?,?) ON CONFLICT(job_id,account_number) DO UPDATE SET json=excluded.json,updated_at=excluded.updated_at`).run(jobId,a,JSON.stringify(identity),new Date().toISOString())}
+export function getIdentity(jobId:string,a:number):TestIdentity|undefined{const r=db.prepare(`SELECT json FROM identities WHERE job_id=? AND account_number=?`).get(jobId,a) as any;return r?JSON.parse(r.json):undefined}
+export function listIdentities(jobId:string):TestIdentity[]{return (db.prepare(`SELECT json FROM identities WHERE job_id=? ORDER BY account_number`).all(jobId) as any[]).map(x=>JSON.parse(x.json))}
 export function restoreInterruptedJobs(){for(const j of listJobs()){if(["starting","running"].includes(j.status)){j.status="paused";j.paused=true;j.statusText="Paused after server restart — resume the job";saveJob(j)}}}
