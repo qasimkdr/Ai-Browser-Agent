@@ -9,7 +9,9 @@ export async function observe(page:Page):Promise<PageSnapshot>{
   const elements=nodes.map((el:any,i)=>{
    const id=`e${i+1}`;el.setAttribute("data-agent-id",id);
    const labels=el.labels?Array.from(el.labels).map((x:any)=>x.innerText).join(" "):"";
-   return {id,tag:el.tagName.toLowerCase(),role:el.getAttribute("role")||undefined,type:el.type||undefined,name:el.name||undefined,label:norm(labels||el.getAttribute("aria-label")),text:norm(el.innerText||el.textContent),placeholder:el.placeholder||undefined,value:(el.type==="password"?"[REDACTED]":norm(el.value))||undefined,checked:typeof el.checked==="boolean"?el.checked:undefined,disabled:!!el.disabled,href:el.href||undefined};
+   const minLength=typeof el.minLength==="number"&&el.minLength>=0?el.minLength:undefined;
+   const maxLength=typeof el.maxLength==="number"&&el.maxLength>=0?el.maxLength:undefined;
+   return {id,tag:el.tagName.toLowerCase(),role:el.getAttribute("role")||undefined,type:el.type||undefined,name:el.name||undefined,label:norm(labels||el.getAttribute("aria-label")),text:norm(el.innerText||el.textContent),placeholder:el.placeholder||undefined,value:(el.type==="password"?"[REDACTED]":norm(el.value))||undefined,checked:typeof el.checked==="boolean"?el.checked:undefined,disabled:!!el.disabled,required:!!el.required,minLength,maxLength,pattern:el.pattern||undefined,autocomplete:el.autocomplete||undefined,href:el.href||undefined};
   });
   const errors=Array.from(document.querySelectorAll('[role="alert"],.error,.errors,.invalid-feedback,[aria-invalid="true"]')).filter(visible).map((e:any)=>norm(e.innerText||e.textContent)).filter(Boolean).slice(0,20);
   const dialogs=Array.from(document.querySelectorAll('[role="dialog"],dialog')).filter(visible).map((e:any)=>norm(e.innerText||e.textContent)).filter(Boolean).slice(0,10);
