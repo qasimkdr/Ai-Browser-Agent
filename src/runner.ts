@@ -14,6 +14,7 @@ const sleep=(ms:number)=>new Promise(r=>setTimeout(r,ms));
 async function collect(page:Page){return page.locator("input,textarea,select").evaluateAll((els:any[])=>Object.fromEntries(els.map(e=>[e.name||e.id||e.getAttribute("aria-label")||e.placeholder||"unnamed",/password/i.test(e.type||"")?"[REDACTED]":e.value||""]).filter((x:any[])=>x[1]!=="")))}
 async function parseList(file:string):Promise<GmailCredential[]>{const raw=await fs.readFile(file,"utf8");return raw.split(/\r?\n/).map(x=>x.trim()).filter(Boolean).map(line=>{const [email,password]=line.split(",").map(x=>x.trim());return{email,password}}).filter(x=>!!x.email&&!!x.password)}
 async function shot(page:Page,dir:string,name:string){await fs.mkdir(dir,{recursive:true});const file=path.join(dir,`${Date.now()}-${name}.png`);await page.screenshot({path:file,fullPage:false});return file}
+function checkpointUrl(baseUrl:string,lastUrl?:string){try{if(!lastUrl)return baseUrl;const a=new URL(baseUrl),b=new URL(lastUrl);return a.hostname===b.hostname&&["http:","https:"].includes(b.protocol)?b.toString():baseUrl}catch{return baseUrl}}
 
 export async function runJob(o:{jobId:string;url:string;goal:string;count:number;gmailFile:string;showBrowser:boolean;startAccount?:number;onStatus:(s:string,a?:number)=>void;shouldStop:()=>boolean;shouldPause:()=>boolean}){
  const creds=await parseList(o.gmailFile);if(creds.length<o.count)throw new Error(`Need at least ${o.count} Gmail entries.`);await fs.mkdir(path.join("data","profiles",o.jobId),{recursive:true});
@@ -22,13 +23,14 @@ export async function runJob(o:{jobId:string;url:string;goal:string;count:number
   while(o.shouldPause()){o.onStatus(`Paused before account ${i}/${o.count}`,i);await sleep(800);if(o.shouldStop())return}
   const base=path.join("data","profiles",o.jobId);const screenshots=path.join("data","screenshots",o.jobId,String(i).padStart(4,"0"));let gmail:any,ctx:any;
   const identity=getIdentity(o.jobId,i)||makeTestIdentity(creds[i-1].email);saveIdentity(o.jobId,i,identity);
+  const resumeMemory=getMemory(o.jobId,i);
   const result:any={accountNumber:i,email:identity.email,username:identity.username,status:"running",fields:{},createdAt:new Date().toISOString()};
   try{
    gmail=await openGmail(creds[i-1],path.join(base,`gmail-${String(i).padStart(4,"0")}`),s=>o.onStatus(s,i),o.showBrowser);
    ctx=await chromium.launchPersistentContext(path.join(base,`site-${String(i).padStart(4,"0")}`),{headless:!o.showBrowser,viewport:{width:1365,height:900},slowMo:Number(process.env.BROWSER_SLOW_MO||80)});
-   const page=ctx.pages()[0]||await ctx.newPage();await page.goto(o.url,{waitUntil:"domcontentloaded",timeout:60000});addEvent(o.jobId,i,"navigation","Opened authorized target website",{url:o.url});
+   const page=ctx.pages()[0]||await ctx.newPage();const startUrl=checkpointUrl(o.url,resumeMemory?.lastUrl);await page.goto(startUrl,{waitUntil:"domcontentloaded",timeout:60000});addEvent(o.jobId,i,"navigation",resumeMemory?.lastUrl?"Resumed authorized checkpoint URL":"Opened authorized target website",{url:startUrl});
    let snap=await observe(page);let plan=getPlan(o.jobId,i);if(!plan.length){plan=await makePlan(o.goal,snap);savePlan(o.jobId,i,plan);addEvent(o.jobId,i,"plan","Created workflow plan",plan)}
-   let memory:Memory=getMemory(o.jobId,i)||{jobId:o.jobId,accountNumber:i,stage:plan[0]?.title||"Inspect page",completed:[],remaining:plan.map(x=>x.title),failedActions:[],loopCount:0,lastUrl:page.url(),currentStep:0,updatedAt:new Date().toISOString()};const watchdog=new Watchdog();
+   let memory:Memory=resumeMemory||{jobId:o.jobId,accountNumber:i,stage:plan[0]?.title||"Inspect page",completed:[],remaining:plan.map(x=>x.title),failedActions:[],loopCount:0,lastUrl:page.url(),currentStep:0,updatedAt:new Date().toISOString()};const watchdog=new Watchdog();
    for(let step=memory.currentStep||0;step<Number(process.env.MAX_STEPS||100);step++){
     while(o.shouldPause()){o.onStatus(`Paused on account ${i}/${o.count}`,i);await sleep(800);if(o.shouldStop())break}if(o.shouldStop()){result.status="stopped";break}
     snap=await observe(page);memory.currentStep=step;memory.lastUrl=snap.url;memory.updatedAt=new Date().toISOString();saveMemory(memory);
@@ -44,8 +46,8 @@ export async function runJob(o:{jobId:string;url:string;goal:string;count:number
     }
 
     if(/verification code|verification email|enter code|one[- ]time password|\botp\b/i.test(snap.text)){
-      o.onStatus(`Account ${i}: checking Gmail for verification code`,i);const otp=await findOtp(gmail.page,new URL(o.url).hostname);
-      if(otp){const codeEl=snap.elements.find(e=>/code|otp|verification/i.test(`${e.label} ${e.name} ${e.placeholder}`));if(codeEl){await page.locator(`[data-agent-id="${codeEl.id}"]`).fill(otp);addEvent(o.jobId,i,"verification","Filled verification code from Gmail");memory.currentStep=step+1;saveMemory(memory);continue}}
+      o.onStatus(`Account ${i}: checking Gmail for verification code`,i);const otpResult=await findOtp(gmail.page,new URL(o.url).hostname);const otp=typeof otpResult==="string"?otpResult:otpResult?.code;
+      if(otp){const codeEl=snap.elements.find(e=>/code|otp|verification/i.test(`${e.label} ${e.name} ${e.placeholder}`));if(codeEl){await page.locator(`[data-agent-id="${codeEl.id}"]`).fill(otp);addEvent(o.jobId,i,"verification","Filled verification code from Gmail",typeof otpResult==="object"?{score:otpResult?.score,attempt:otpResult?.attempt}:undefined);memory.currentStep=step+1;saveMemory(memory);continue}}
     }
 
     const image=(await page.screenshot({type:"png"})).toString("base64");let action=await decide(snap,image,`${o.goal}\nAuthorized test identity is already persisted for this profile. Reuse values already present in recognized fields; do not invent a different email.`,memory,plan);
