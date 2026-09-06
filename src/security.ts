@@ -1,0 +1,4 @@
+import crypto from "node:crypto";
+export function redact(v:any):any{if(Array.isArray(v))return v.map(redact);if(v&&typeof v==="object")return Object.fromEntries(Object.entries(v).map(([k,x])=>[/pass(word)?|pwd|token|secret|cookie|authorization/i.test(k)?[k,"[REDACTED]"]:[k,redact(x)]]));return v}
+export function timingSafeBearer(header:string|undefined){const expected=process.env.DASHBOARD_TOKEN;if(!expected)return true;const got=(header||"").replace(/^Bearer\s+/i,"");const a=Buffer.from(got),b=Buffer.from(expected);return a.length===b.length&&crypto.timingSafeEqual(a,b)}
+export function allowedUrl(raw:string){try{const u=new URL(raw);if(!["http:","https:"].includes(u.protocol))return false;const allow=(process.env.ALLOWED_DOMAINS||"").split(",").map(x=>x.trim()).filter(Boolean);return !allow.length||allow.some(d=>u.hostname===d||u.hostname.endsWith("."+d))}catch{return false}}
