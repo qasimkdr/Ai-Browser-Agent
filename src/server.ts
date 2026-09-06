@@ -25,7 +25,7 @@ function startWorker(job:Job,gmailFile:string,startAccount?:number){
  if(workers.has(job.jobId))return;
  workers.add(job.jobId);privateFiles.set(job.jobId,gmailFile);job.status="running";job.paused=false;job.stopped=false;saveJob(job);
  runJob({jobId:job.jobId,url:job.url,goal:job.goal,count:job.count,gmailFile,showBrowser:job.showBrowser,startAccount,onStatus:(s,a)=>{const j=getJob(job.jobId);if(!j)return;j.statusText=s;if(a)j.currentAccount=a;saveJob(j);addEvent(j.jobId,a||null,"status",s)},shouldStop:()=>getJob(job.jobId)?.stopped===true,shouldPause:()=>getJob(job.jobId)?.paused===true})
- .then(()=>{const j=getJob(job.jobId);if(!j)return;const rr=listResults(job.jobId);j.successCount=rr.filter(x=>x.status==="success").length;j.failedCount=rr.filter(x=>x.status==="failed").length;if(j.stopped){j.status="stopped";j.statusText="Stopped by user"}else if(j.paused){j.status="paused"}else{j.status="completed";j.statusText="Job completed"}saveJob(j)})
+ .then(()=>{const j=getJob(job.jobId);if(!j)return;const rr=listResults(job.jobId);j.successCount=rr.filter(x=>x.status==="success").length;j.failedCount=rr.filter(x=>x.status==="failed").length;const manual=rr.find(x=>x.status==="paused");if(j.stopped){j.status="stopped";j.statusText="Stopped by user"}else if(manual){j.paused=true;j.status="paused";j.currentAccount=manual.accountNumber||j.currentAccount;j.statusText=manual.error||"Manual verification required"}else if(j.paused){j.status="paused"}else{j.status="completed";j.statusText="Job completed"}saveJob(j)})
  .catch((e:any)=>{const j=getJob(job.jobId);if(j){j.status="failed";j.error=e?.message||String(e);j.statusText="Job failed";saveJob(j)}})
  .finally(()=>workers.delete(job.jobId));
 }
